@@ -49,11 +49,9 @@ semToSyn sem = go sem
 prog1 :: Sem u (b -> a -> b)
 prog1 = SemLam (\x -> SemLam (\_ -> SemVar (inj x)))
 
-λ :: (forall u'. (u <= u') => (forall u''. (u' <= u'') => Sem u'' a) -> Sem u' b) -> Sem u (a -> b)
+λ, lam :: (forall u'. (u <= u') => (forall u''. (u' <= u'') => Sem u'' a) -> Sem u' b) -> Sem u (a -> b)
 λ f = SemLam (\x -> f (SemVar (inj x)))
-
 -- For those who don't have a Greek keyboard
-lam :: (forall u'. (u <= u') => (forall u''. (u' <= u'') => Sem u'' a) -> Sem u' b) -> Sem u (a -> b)
 lam f = λ f
 
 infixl 1 $$
@@ -61,10 +59,15 @@ infixl 1 $$
 ($$) = SemApp
 
 prog2 :: Sem u ((b -> c) -> a -> b -> c)
-prog2 = λ \x -> λ \_y -> λ \z -> x $$ z
+prog2 = λ\ x -> λ\ _y -> λ\ z -> x $$ z
 
 prog3 :: Sem u (a -> b -> b)
-prog3 = (λ \x -> λ \_y -> x) $$ λ \y -> y
+prog3 = (λ\ x -> λ\ _y -> x) $$ λ\ y -> y
+
+-- Currently unused (WIP)
+data SemFree f u a where
+  SemPure :: u a -> Sem u a
+  SemBind :: f u x -> (forall u'. (u <= u') => u' x -> SemFree f u' a) -> SemFree f u a
 
 main :: IO ()
 main = do
