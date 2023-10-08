@@ -30,52 +30,41 @@ data Sem u a where
 instance Var env <= Var (x : env) where
   inj = VS
 
-newtype Forall f a = Forall (forall u. f u a)
-
-synToSem :: Syn '[] a -> Forall Sem a
-synToSem x0 = Forall (go (\case {}) x0)
+synToSem :: Syn '[] a -> (forall u. Sem u a)
+synToSem x0 = go (\case {}) x0
   where
     go :: (forall x. Var env x -> u x) -> Syn env a -> Sem u a
     go env (SynVar x) = SemVar (env x)
     go env (SynApp f x) = SemApp (go env f) (go env x)
     go env (SynLam bdy) = SemLam (\x -> go (\case VZ -> x; VS v -> inj (env v)) bdy)
 
-semToSyn :: Forall Sem a -> Syn '[] a
-semToSyn (Forall sem) = go sem
+semToSyn :: (forall u. Sem u a) -> Syn '[] a
+semToSyn sem = go sem
   where
     go :: Sem (Var env) a -> Syn env a
     go (SemVar x) = SynVar x
     go (SemApp f x) = SynApp (go f) (go x)
     go (SemLam bdy) = SynLam (go (bdy VZ))
 
-prog1 :: Forall Sem (b -> a -> b)
-prog1 = Forall (SemLam (\x -> SemLam (\_ -> SemVar (inj x))))
+prog1 :: Sem u (b -> a -> b)
+prog1 = SemLam (\x -> SemLam (\_ -> SemVar (inj x)))
 
-var :: (u <= u') => u a -> Sem u' a
-var x = SemVar (inj x)
-
-λ :: (forall u'. (u <= u') => u' a -> Sem u' b) -> Sem u (a -> b)
-λ f = SemLam f
+λ :: (forall u'. (u <= u') => (forall u''. (u' <= u'') => Sem u'' a) -> Sem u' b) -> Sem u (a -> b)
+λ f = SemLam (\x -> f (SemVar (inj x)))
 
 -- For those who don't have a Greek keyboard
-lam :: (forall u'. (u <= u') => u' a -> Sem u' b) -> Sem u (a -> b)
+lam :: (forall u'. (u <= u') => (forall u''. (u' <= u'') => Sem u'' a) -> Sem u' b) -> Sem u (a -> b)
 lam f = λ f
 
 infixl 1 $$
 ($$) :: Sem u (a -> b) -> Sem u a -> Sem u b
 ($$) = SemApp
 
-prog2 :: Forall Sem ((b -> c) -> a -> b -> c)
-prog2 = Forall $ λ \x -> λ \_ -> λ \z -> var x $$ var z
+prog2 :: Sem u ((b -> c) -> a -> b -> c)
+prog2 = λ \x -> λ \_y -> λ \z -> x $$ z
 
--- >>> semToSyn prog2
--- SynLam (SynLam (SynLam (SynApp (SynVar (VS (VS VZ))) (SynVar VZ))))
-
-prog3 :: Forall Sem (a -> b -> b)
-prog3 = Forall $ (λ \x -> λ \_y -> var x) $$ λ \y -> var y
-
--- >>> semToSyn prog3
--- SynApp (SynLam (SynLam (SynVar (VS VZ)))) (SynLam (SynVar VZ))
+prog3 :: Sem u (a -> b -> b)
+prog3 = (λ \x -> λ \_y -> x) $$ λ \y -> y
 
 main :: IO ()
 main = do
