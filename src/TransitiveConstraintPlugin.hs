@@ -15,7 +15,6 @@ import GHC.Tc.Types
 import GHC.Tc.Types.Constraint
 import GHC.Tc.Types.Evidence
 import GHC.Tc.Utils.Monad (initIfaceLcl, initIfaceTcRn)
-import GHC.Tc.Utils.TcType (eqType)
 import System.IO.Unsafe (unsafePerformIO)
 
 plugin :: Plugin
@@ -82,67 +81,21 @@ myTcPluginSolver _ _ _ [] = pure (getResult mempty)
 myTcPluginSolver (cls, instf, instfgh) _evb givens wanteds = do
   -- traceM (showSDocUnsafe (ppr (cls, instf, instfgh, givens, wanteds)))
 
-  fmap (getResult . mconcat) . for wanteds $ \w -> do
-    case w of
-      CDictCan _ cls' [x, y] _ | cls' == cls ->
+  fmap (getResult . mconcat) . for wanteds $ \ct -> do
+    case ct of
+      CDictCan{} | cc_class ct == cls, [x,y] <- cc_tyargs ct ->
         case go (evDFunApp (instanceDFunId instf) [y] []) x y y of
-          [] -> pure (Result (TcPluginContradiction [w]))
-          (ev : _) -> pure (Result (TcPluginOk [(ev, w)] []))
+          [] -> pure (Result (TcPluginContradiction [ct]))
+          (ev : _) -> pure (Result (TcPluginOk [(ev, ct)] []))
       _ -> pure (Result (TcPluginOk [] []))
   where
     go :: EvTerm -> PredType -> PredType -> PredType -> [EvTerm]
     go ev x v y
       | eqType x v = [ev]
       | otherwise = do
-          ct@(CDictCan _ _ [x', y'] _) <- clsGivens
+          ct <- clsGivens
+          [x', y'] <- pure (cc_tyargs ct)
           guard (eqType y' v)
           go (evDFunApp (instanceDFunId instfgh) [x', y', y] [ctEvExpr (ctEvidence ct), evTermExpr ev]) x x' y
-    clsGivens = [c | c@(CDictCan _ cls' [_, _] _) <- givens, cls' == cls]
+    clsGivens = [ct | ct@CDictCan{} <- givens, cc_class ct == cls, [_,_] <- pure (cc_tyargs ct)]
 
--- --     traceM (showSDocUnsafe (ppr (w, givens)))
--- --     case w of
--- --       CDictCan _ cls' [x, y] _
--- --         | cls' == cls
--- --         , Just g <- find (\ct -> cc_class ct == cls && eqType y (cc_tyargs ct !! 1)) givens
--- --         -> -- let x' = cc_tyargs g !! 0 in
--- --            traceM (showSDocUnsafe (ppr (evSelector injId [] []))) *>
--- --              undefined
--- --            -- ev <- newWanted _ (mkClassPred cls [x', y])
--- --            -- trace (showSDocUnsafe (ppr g)) undefined
--- --       _ -> pure mempty
---     -- let clsGivens = filter (\case CDictCan _ cls' [_, _] _ | cls' == cls -> True; _ -> False) givens
---     -- newCts <- go clsGivens [] clsGivens
---     -- traceM (showSDocUnsafe (ppr clsGivens))
---     -- pure (Result (TcPluginOk [] newCts))
---   where
---     go
---
--- --     go xs1 xsn (ct@(CDictCan cc_ev cc_class [arg1, arg2] cc_pend_sc):cts) = do
--- --       xsn' <- traverse (combine ct) (xs1 ++ xsn)
--- --       go xs1 (catMaybes xsn' ++ xsn) cts
--- --     go xs1 xsn (_:cts) = go xs1 xsn cts
--- --     go _ xs _ = pure xs
--- --
--- --     foo ct1 ct2 x y sc = do
--- --       (_, env) <- getEnvs
--- --       ev <-
--- --         newGiven
--- --           evb
--- --           ( CtLoc
--- --               AnnOrigin
--- --               env
--- --               (Just TypeLevel)
--- --               (bumpSubGoalDepth (maxSubGoalDepth (ctLocDepth (ctLoc ct1)) (ctLocDepth (ctLoc ct2))))
--- --           )
--- --           (mkClassPred cls [x, y])
--- --           (trace (showSDocUnsafe (ppr (mkEvScSelectors cls [x, y]))) undefined) -- inj ct1 . inj ct2
--- --       pure (CDictCan ev cls [x, y] sc)
--- --
--- --     combine
--- --       ct1@(CDictCan (CtGiven p1 e1 l1) _ [x1, y1] sc1)
--- --       ct2@(CDictCan (CtGiven p2 e2 l2) _ [x2, y2] sc2)
--- --         | eqType y1 x2 = Just <$> foo ct2 ct1 x1 y2 sc
--- --         | eqType y2 x1 = Just <$> foo ct1 ct2 x2 y1 sc
--- --         where
--- --           sc = if sc1 == sc2 then sc1 else error "cc_pend_sc not equal"
--- --     combine _ _ = pure Nothing

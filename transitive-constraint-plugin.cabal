@@ -13,7 +13,7 @@ common warnings
 library
     import:           warnings
     exposed-modules:  TransitiveConstraintPlugin, Sub, SubTrans
-    build-depends:    base ^>=4.18.1.0, ghc
+    build-depends:    base ^>= {4.17,4.18}, ghc ^>= {9.4,9.6}
     hs-source-dirs:   src
     default-language: GHC2021
 
