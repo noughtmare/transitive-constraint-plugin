@@ -1,0 +1,25 @@
+cabal-version:   3.0
+name:            transitive-constraint-plugin
+version:         0.1.0.0
+license:         NONE
+author:          jaro.reinders@gmail.com
+maintainer:      Jaro Reinders
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common warnings
+    ghc-options: -Wall -dcore-lint
+
+library
+    import:           warnings
+    exposed-modules:  TransitiveConstraintPlugin, Sub, SubTrans
+    build-depends:    base ^>=4.18.1.0, ghc
+    hs-source-dirs:   src
+    default-language: GHC2021
+
+executable semsyn
+    import:           warnings
+    main-is:          Main.hs
+    build-depends:    base, transitive-constraint-plugin
+    hs-source-dirs:   semsyn
+    default-language: GHC2021
