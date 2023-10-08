@@ -54,20 +54,25 @@ prog1 = Forall (SemLam (\x -> SemLam (\_ -> SemVar (inj x))))
 var :: (u <= u') => u a -> Sem u' a
 var x = SemVar (inj x)
 
-lam :: (forall u'. (u <= u') => u' a -> Sem u' b) -> Sem u (a -> b)
-lam f = SemLam f
+λ :: (forall u'. (u <= u') => u' a -> Sem u' b) -> Sem u (a -> b)
+λ f = SemLam f
 
-app :: Sem u (a -> b) -> Sem u a -> Sem u b
-app = SemApp
+-- For those who don't have a Greek keyboard
+lam :: (forall u'. (u <= u') => u' a -> Sem u' b) -> Sem u (a -> b)
+lam f = λ f
+
+infixl 1 $$
+($$) :: Sem u (a -> b) -> Sem u a -> Sem u b
+($$) = SemApp
 
 prog2 :: Forall Sem ((b -> c) -> a -> b -> c)
-prog2 = Forall $ lam \x -> lam \_ -> lam \z -> app (var x) (var z)
+prog2 = Forall $ λ \x -> λ \_ -> λ \z -> var x $$ var z
 
 -- >>> semToSyn prog2
 -- SynLam (SynLam (SynLam (SynApp (SynVar (VS (VS VZ))) (SynVar VZ))))
 
 prog3 :: Forall Sem (a -> b -> b)
-prog3 = Forall $ app (lam \x -> lam \_y -> var x) (lam \y -> var y)
+prog3 = Forall $ (λ \x -> λ \_y -> var x) $$ λ \y -> var y
 
 -- >>> semToSyn prog3
 -- SynApp (SynLam (SynLam (SynVar (VS VZ)))) (SynLam (SynVar VZ))
