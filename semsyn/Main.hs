@@ -66,7 +66,7 @@ prog3 = (λ\ x -> λ\ _y -> x) $$ λ\ y -> y
 
 -- Currently unused (WIP)
 data SemFree f u a where
-  SemPure :: u a -> Sem u a
+  SemPure :: u a -> SemFree f u a
   SemBind :: f u x -> (forall u'. (u <= u') => u' x -> SemFree f u' a) -> SemFree f u a
 
 main :: IO ()

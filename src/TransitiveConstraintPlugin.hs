@@ -16,6 +16,7 @@ import GHC.Tc.Types.Constraint
 import GHC.Tc.Types.Evidence
 import GHC.Tc.Utils.Monad (initIfaceLcl, initIfaceTcRn)
 import System.IO.Unsafe (unsafePerformIO)
+import GHC.Tc.Utils.TcType (eqType)
 
 plugin :: Plugin
 plugin =
