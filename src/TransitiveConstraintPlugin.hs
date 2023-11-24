@@ -18,6 +18,9 @@ import GHC.Tc.Utils.Monad (initIfaceLcl, initIfaceTcRn)
 import System.IO.Unsafe (unsafePerformIO)
 import GHC.Tc.Utils.TcType (eqType)
 
+import Sub ()
+import SubTrans ()
+
 plugin :: Plugin
 plugin =
   defaultPlugin
