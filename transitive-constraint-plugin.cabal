@@ -17,9 +17,9 @@ library
     hs-source-dirs:   src
     default-language: GHC2021
 
--- executable semsyn
---     import:           warnings
---     main-is:          Main.hs
---     build-depends:    base, transitive-constraint-plugin
---     hs-source-dirs:   semsyn
---     default-language: GHC2021
+executable free-example
+    import:           warnings
+    main-is:          Free.hs
+    build-depends:    base, transitive-constraint-plugin
+    hs-source-dirs:   examples
+    default-language: GHC2021
