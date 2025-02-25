@@ -227,8 +227,8 @@ gcd (Proxy @ref) x0 y0 =
       >>= \(Cons x' (Cons y' Nil)) ->
     eq x' y' >>= \b' ->
     ite b'
-      (return (var x))
-      (br (var r) (Cons (var x) (Cons (var y) Nil))))
+      (return (var x'))
+      (br (var r) (Cons (var x') (Cons (var y') Nil))))
 
 type Void1 :: [Type] -> Type
 data Void1 a

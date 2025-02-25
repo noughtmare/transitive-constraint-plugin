@@ -9,7 +9,7 @@ type (<=) :: (Type -> Type) -> (Type -> Type) -> Constraint
 class f <= g where
   inj :: f x -> g x
 
--- These are overflapping, but our plugin will resolve the overlap.
+-- These are overlapping, but our plugin will resolve the overlap.
 
 instance f <= f where
   inj = id
