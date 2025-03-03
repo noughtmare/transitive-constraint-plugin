@@ -63,7 +63,10 @@ solver (cls, refl, trans) _evb givens =
   foldMap $ \ct ->
     -- trace ("clsGivens: " ++ showSDocUnsafe (ppr clsGivens)) $
     case ct of
-      CDictCan{} | cc_class ct == cls, [k,x,y] <- cc_tyargs ct ->
+      -- GHC 9.12:
+      CDictCan di | di_cls di == cls, [k,x,y] <- di_tys di ->
+      -- GHC 9.4/9.6:
+      -- CDictCan{} | cc_class ct == cls, [k,x,y] <- cc_tyargs ct ->
         case go (evDFunApp (instanceDFunId refl) [k,y] []) x y y of
           [] ->
             -- trace ("contradiction: " ++ showSDocUnsafe (ppr ct)) $
@@ -77,10 +80,17 @@ solver (cls, refl, trans) _evb givens =
     go ev x v y
       | eqType x v = [ev]
       | otherwise = do
-          ct <- clsGivens
-          [k, x', y'] <- pure (cc_tyargs ct)
+          -- GHC 9.12
+          ct@(CDictCan di) <- clsGivens
+          [k, x', y'] <- pure (di_tys di)
+          -- GHC 9.4/9.6
+          -- ct <- clsGivens
+          -- [k, x', y'] <- pure (cc_tyargs ct)
           guard (eqType y' v)
           go (evDFunApp (instanceDFunId trans) [k, x', y', y] [ctEvExpr (ctEvidence ct), evTermExpr ev]) x x' y
-    clsGivens = [ct | ct@CDictCan{} <- givens, cc_class ct == cls, [_,_,_] <- pure (cc_tyargs ct)]
+    -- GHC 9.12
+    clsGivens = [ct | ct@(CDictCan di) <- givens, di_cls di == cls, [_,_,_] <- pure (di_tys di)]
+    -- GHC 9.4/9.6:
+    -- clsGivens = [ct | ct@CDictCan{} <- givens, cc_class ct == cls, [_,_,_] <- pure (cc_tyargs ct)]
 
 -- TODO: If constraint could be solved by disambiguating one or more variables, then try to do that!

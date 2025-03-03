@@ -13,7 +13,9 @@ common warnings
 library
     import:           warnings
     exposed-modules:  TransitiveConstraintPlugin, Sub, SubInstances
-    build-depends:    base ^>= {4.17,4.18}, ghc ^>= {9.4,9.6}
+    build-depends:    base ^>= {4.21}, ghc ^>= {9.12}
+    -- Could support 9.4 & 9.6 with some CPP
+    -- build-depends:    base ^>= {4.17,4.18,4.21}, ghc ^>= {9.4,9.6,9.12}
     hs-source-dirs:   src
     default-language: GHC2021
 
@@ -26,8 +28,9 @@ executable semsyn
 
 executable gcd-example
     import:           warnings
-    main-is:          GCD.hs
-    build-depends:    base, transitive-constraint-plugin
+    main-is:          GCDExe.hs
+    other-modules:    GCDLib
+    build-depends:    base, transitive-constraint-plugin, ghc ^>= 9.12
     hs-source-dirs:   examples
     default-language: GHC2021
 

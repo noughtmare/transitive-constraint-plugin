@@ -4,6 +4,8 @@
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 
+module GCDLib where
+
 import qualified Sub
 import Data.Kind
 import Prelude hiding ((>>=), return, gcd)
@@ -40,6 +42,9 @@ data Var a e where
 deriving instance Show (Var a e)
 
 newtype Var' e a = Var' (Var a e)
+
+var :: e <= e' => Var a e -> Var a e'
+var x = case Sub.inj (Var' x) of Var' y -> y
 
 instance e <= e' => Var' e Sub.<= Var' (a : e') where
   inj x = case Sub.inj x of Var' y -> Var' (There y)
@@ -187,32 +192,11 @@ instance CFunctor End where
 Pure x >>= k = k x
 Free m >>= k = Free (cmap (\x -> x >>= (\y -> k y)) m)
 
+fail :: String -> Free f c e
+fail e = error ("Failed to pattern match in do block: " ++ e)
+
 return :: (VFunctor c, e <= e') => c e -> Free f c e'
 return x = Pure (vmap var x)
-
--- function gcd(a, b)
---     while a ≠ b
---         if a > b
---             a := a − b
---         else
---             b := b − a
---     return a
-
--- Without plugin:
---
--- gcd :: (CFunctor f, Boolean < f, Flow ref < f, Arith < f) => Proxy ref -> Var Int e -> Var Int e -> Free f (Var Int) e
--- gcd (Proxy @ref) x y =
---   loop (Proxy @ref) (Cons x (Cons y Nil)) $ \_ r (Cons x (Cons y Nil)) ->
---     gt x y >>= \e2 b ->
---     ite b
---       (sub (e2 x) (e2 y) >>= \e3 x ->
---       return (Cons x (Cons (e3$e2 y) Nil)))
---       (sub (e2 y) (e2 x) >>= \e3 y ->
---       return (Cons (e3$e2 x) (Cons y Nil))) >>= \e3 (Cons x (Cons y Nil)) ->
---     eq x y >>= \e4 b ->
---     ite b
---       (return (e4 x))
---       (br (e4$e3$e2 r) (Cons (e4 x) (Cons (e4 y) Nil)))
 
 type VFunctor :: CType -> Constraint
 class VFunctor c where
@@ -223,33 +207,6 @@ instance VFunctor (Vars as) where
   vmap f (x :> xs) = f x :> vmap f xs
   vmap _ Nil = Nil
 
-var :: e <= e' => Var a e -> Var a e'
-var x = case Sub.inj (Var' x) of Var' y -> y
-
 (.>) :: e <= e' => Var a e -> Vars as e' -> Vars (a : as) e'
 x .> xs = var x :> xs
 infixr .>
-
-gcd :: (CFunctor f, Boolean < f, Flow ref < f, Arith < f, e1 <= e, e2 <= e)
-    => Proxy ref -> Var Int e1 -> Var Int e2 -> Free f (Var Int) e
-gcd (Proxy @ref) x0 y0 =
-  loop (Proxy @ref) (x0 .> y0 .> Nil) $ \r (x :> y :> Nil) ->
-    gt x y >>= \b ->
-    ite b
-      (sub x y >>= \x' ->
-      return (x' :> y .> Nil))
-      (sub y x >>= \y' ->
-      return (x .> y' :> Nil))
-      >>= \(x' :> y' :> Nil) ->
-    eq x' y' >>= \b' ->
-    ite b'
-      (return x')
-      (br r (x' .> y' .> Nil))
-
-type Void1 :: [Type] -> Type
-data Void1 a
-
-main :: IO ()
-main = print
-  @(Free (Boolean + (Flow Void1 + (Arith + End))) (Var Int) '[])
-  (int 8 >>= \x -> int 12 >>= \y -> gcd (Proxy @Void1) x y)
