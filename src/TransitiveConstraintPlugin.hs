@@ -2,46 +2,42 @@ module TransitiveConstraintPlugin (plugin) where
 
 import Debug.Trace
 
-import Control.Concurrent
+import qualified GHC.Iface.Load
+-- import Control.Concurrent
 import Control.Monad (guard)
-import Data.Traversable (for)
 import GHC.Core.Class (Class)
 import GHC.Core.InstEnv
-import GHC.Iface.Load (loadModuleInterface)
-import GHC.IfaceToCore (tcIfaceInst)
 import GHC.Plugins
 import GHC.Tc.Plugin
 import GHC.Tc.Types
 import GHC.Tc.Types.Constraint
 import GHC.Tc.Types.Evidence
-import GHC.Tc.Utils.Monad (initIfaceLcl, initIfaceTcRn)
-import System.IO.Unsafe (unsafePerformIO)
 import GHC.Tc.Utils.TcType (eqType)
-import qualified Data.List as List
 
 plugin :: Plugin
 plugin =
   defaultPlugin
-    { tcPlugin = \_ -> Just transitiveConstraintPlugin
-    }
-
-transitiveConstraintPlugin :: GHC.Tc.Types.TcPlugin
-transitiveConstraintPlugin =
-  TcPlugin
-    { tcPluginInit = do
-        tr <- findImportedModule (mkModuleName "Sub") NoPkgQual
-        case tr of
-          Found _ md -> do
-            clsNm <- lookupOrig md (mkOccName clsName "<=")
-            cls <- tcLookupClass clsNm
-            InstEnvs gbl _ _ <- getInstEnvs
-            case filter ((== cls) . is_cls) (instEnvElts gbl) of
-              [trans, refl] -> pure (cls, refl, trans)
-              _ -> error "TransitiveConstraintPlugin: failed to find instances"
-          _ -> error "TransitiveConstraintPlugin: failed to find 'Sub' module"
-    , tcPluginSolve = transitiveConstraintSolver
-    , tcPluginRewrite = const emptyUFM
-    , tcPluginStop = const (pure ())
+    { tcPlugin = const $ Just $
+      TcPlugin
+        { tcPluginInit = do
+            tr <- findImportedModule (mkModuleName "Sub") NoPkgQual
+            case tr of
+              Found _ md -> do
+                cls <- tcLookupClass =<< lookupOrig md (mkOccName clsName "<=")
+                tr2 <- findImportedModule (mkModuleName "SubInstances") NoPkgQual
+                case tr2 of
+                  Found _ md2 -> do
+                    _ <- unsafeTcPluginTcM (GHC.Iface.Load.loadModuleInterface (text "Needed for refl and trans instances") md2)
+                    InstEnvs gbl _ _ <- getInstEnvs
+                    case filter ((== cls) . is_cls) (instEnvElts gbl) of
+                      [trans, refl] -> pure (cls, refl, trans)
+                      _ -> error "TransitiveConstraintPlugin: failed to find instances"
+                  _ -> error "TransitiveConstraintPlugin: failed to find 'SubInstances' module"
+              _ -> error "TransitiveConstraintPlugin: failed to find 'Sub' module"
+        , tcPluginSolve = \info evb gs ws -> pure (getResult (solver info evb gs ws))
+        , tcPluginRewrite = const emptyUFM
+        , tcPluginStop = const (pure ())
+        }
     }
 
 newtype Result = Result {getResult :: TcPluginSolveResult}
@@ -57,34 +53,34 @@ evTermExpr :: EvTerm -> EvExpr
 evTermExpr (EvExpr x) = x
 evTermExpr _ = error "This EvTerm is not an EvExpr"
 
-transitiveConstraintSolver ::
+solver ::
   (Class, ClsInst, ClsInst) ->
   EvBindsVar ->
   [Ct] -> -- Givens
   [Ct] -> -- Wanteds
-  TcPluginM TcPluginSolveResult
-transitiveConstraintSolver _ _ _ [] = pure (getResult mempty)
-transitiveConstraintSolver (cls, refl, trans) _evb givens wanteds = do
-  fmap (getResult . mconcat) . for wanteds $ \ct -> do
-    traceM ("clsGivens: " ++ showSDocUnsafe (ppr clsGivens))
+  Result
+solver (cls, refl, trans) _evb givens =
+  foldMap $ \ct ->
+    -- trace ("clsGivens: " ++ showSDocUnsafe (ppr clsGivens)) $
     case ct of
-      CDictCan{} | cc_class ct == cls, [x,y] <- cc_tyargs ct -> do
-        case go (evDFunApp (instanceDFunId refl) [y] []) x y y of
-          [] -> do
-            traceM ("contradiction: " ++ showSDocUnsafe (ppr ct))
-            pure (Result (TcPluginContradiction [ct]))
-          (ev : _) -> do
-            traceM ("Ok: " ++ showSDocUnsafe (ppr (ev, ct)))
-            pure (Result (TcPluginOk [(ev, ct)] []))
-      _ -> pure (Result (TcPluginOk [] []))
+      CDictCan{} | cc_class ct == cls, [k,x,y] <- cc_tyargs ct ->
+        case go (evDFunApp (instanceDFunId refl) [k,y] []) x y y of
+          [] ->
+            -- trace ("contradiction: " ++ showSDocUnsafe (ppr ct)) $
+            Result (TcPluginContradiction [ct])
+          (ev : _) ->
+            -- trace ("Ok: " ++ showSDocUnsafe (ppr (ev, ct))) $
+            Result (TcPluginOk [(ev, ct)] [])
+      _ -> Result (TcPluginOk [] [])
   where
     go :: EvTerm -> PredType -> PredType -> PredType -> [EvTerm]
     go ev x v y
       | eqType x v = [ev]
       | otherwise = do
           ct <- clsGivens
-          [x', y'] <- pure (cc_tyargs ct)
+          [k, x', y'] <- pure (cc_tyargs ct)
           guard (eqType y' v)
-          go (evDFunApp (instanceDFunId trans) [x', y', y] [ctEvExpr (ctEvidence ct), evTermExpr ev]) x x' y
-    clsGivens = [ct | ct@CDictCan{} <- givens, cc_class ct == cls, [_,_] <- pure (cc_tyargs ct)]
+          go (evDFunApp (instanceDFunId trans) [k, x', y', y] [ctEvExpr (ctEvidence ct), evTermExpr ev]) x x' y
+    clsGivens = [ct | ct@CDictCan{} <- givens, cc_class ct == cls, [_,_,_] <- pure (cc_tyargs ct)]
 
+-- TODO: If constraint could be solved by disambiguating one or more variables, then try to do that!

@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -fplugin=TransitiveConstraintPlugin #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ExplicitNamespaces #-}
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 
@@ -12,6 +11,7 @@ import Data.Proxy
 
 type CType = [Type] -> Type
 
+type (<) :: (CType -> CType) -> (CType -> CType) -> Constraint
 class f < g where
   inj :: f c e -> g c e
   prj :: g c e -> Maybe (f c e)
@@ -41,7 +41,7 @@ deriving instance Show (Var a e)
 
 newtype Var' e a = Var' (Var a e)
 
-instance {-# OVERLAPPING #-} e <= e' => Var' e Sub.<= Var' (a : e') where
+instance e <= e' => Var' e Sub.<= Var' (a : e') where
   inj x = case Sub.inj x of Var' y -> Var' (There y)
 
 type Length :: [k] -> Type
@@ -62,12 +62,14 @@ type e <= e' = Var' e Sub.<= Var' e'
 type Vars :: [Type] -> [Type] -> Type
 data Vars as e where
   Nil :: Vars '[] e
-  Cons :: Var a e -> Vars as e -> Vars (a : as) e
+  (:>) :: Var a e -> Vars as e -> Vars (a : as) e
 deriving instance Show (Vars as e)
+
+infixr :>
 
 mapVars :: (forall a. Var a e -> Var a e') -> Vars as e -> Vars as e'
 mapVars _ Nil = Nil
-mapVars f (Cons x xs) = Cons (f x) (mapVars f xs)
+mapVars f (x :> xs) = f x :> mapVars f xs
 
 type Free :: (CType -> CType) -> CType -> CType
 data Free f c e where
@@ -112,13 +114,13 @@ deriving instance (forall e'. Show (c e')) => Show (Arith c e)
 int :: Arith < f => Int -> Free f (Var Int) e
 int n = Free (inj (Int n (Pure Here)))
 
-add, sub :: Arith < f => Var Int e -> Var Int e -> Free f (Var Int) e
-add x y = Free (inj (Add x y (Pure Here)))
-sub x y = Free (inj (Sub x y (Pure Here)))
+add, sub :: (e1 <= e, e2 <= e, Arith < f) => Var Int e1 -> Var Int e2 -> Free f (Var Int) e
+add x y = Free (inj (Add (var x) (var y) (Pure Here)))
+sub x y = Free (inj (Sub (var x) (var y) (Pure Here)))
 
-gt, eq :: Arith < f => Var Int e -> Var Int e -> Free f (Var Bool) e
-gt x y = Free (inj (Gt x y (Pure Here)))
-eq x y = Free (inj (Eq x y (Pure Here)))
+gt, eq :: (Arith < f, e1 <= e, e2 <= e) => Var Int e1 -> Var Int e2 -> Free f (Var Bool) e
+gt x y = Free (inj (Gt (var x) (var y) (Pure Here)))
+eq x y = Free (inj (Eq (var x) (var y) (Pure Here)))
 
 type (++) :: [k] -> [k] -> [k]
 type family xs ++ ys where
@@ -136,7 +138,7 @@ heres :: forall as e. KnownLength as => Proxy e -> Vars as (as ++ e)
 heres Proxy = go (lengthS @as) where
   go :: Length bs -> Vars bs (bs ++ e)
   go Z = Nil
-  go (S i) = Cons Here (mapVars There (go i))
+  go (S i) = Here :> mapVars There (go i)
 
 block :: forall as ref f c e. (KnownLength as, e <= (as ++ e), Flow ref < f) => Proxy ref -> (forall e'. e <= e' => Var (ref as) e' -> Free f c e') -> (forall e'. e <= e' => Vars as e' -> Free f c e') -> Free f c e
 block _ m n = Free (inj (Block (m Here) (n (heres (Proxy @e)))))
@@ -144,8 +146,8 @@ block _ m n = Free (inj (Block (m Here) (n (heres (Proxy @e)))))
 loop :: forall as ref f c e. (KnownLength as, e <= (as ++ e), e <= (ref as : as ++ e), Flow ref < f) => Proxy ref -> Vars as e -> (forall e'. e <= e' => Var (ref as) e' -> Vars as e' -> Free f c e') -> Free f c e
 loop _ x m = Free (inj (Loop x (m Here (mapVars There (heres (Proxy @e))))))
 
-br :: Flow ref < f => Var (ref as) e -> Vars as e -> Free f c e
-br r x = Free (inj (Br r x))
+br :: (Flow ref < f, e1 <= e) => Var (ref as) e1 -> Vars as e -> Free f c e
+br r x = Free (inj (Br (var r) x))
 
 type End :: CType -> CType
 data End c a deriving Show
@@ -185,8 +187,8 @@ instance CFunctor End where
 Pure x >>= k = k x
 Free m >>= k = Free (cmap (\x -> x >>= (\y -> k y)) m)
 
-return :: c e -> Free f c e
-return x = Pure x
+return :: (VFunctor c, e <= e') => c e -> Free f c e'
+return x = Pure (vmap var x)
 
 -- function gcd(a, b)
 --     while a ≠ b
@@ -212,23 +214,37 @@ return x = Pure x
 --       (return (e4 x))
 --       (br (e4$e3$e2 r) (Cons (e4 x) (Cons (e4 y) Nil)))
 
+type VFunctor :: CType -> Constraint
+class VFunctor c where
+  vmap :: (forall a. Var a e -> Var a e') -> c e -> c e'
+instance VFunctor (Var a) where
+  vmap x = x
+instance VFunctor (Vars as) where
+  vmap f (x :> xs) = f x :> vmap f xs
+  vmap _ Nil = Nil
+
 var :: e <= e' => Var a e -> Var a e'
 var x = case Sub.inj (Var' x) of Var' y -> y
 
-gcd :: (CFunctor f, Boolean < f, Flow ref < f, Arith < f) => Proxy ref -> Var Int e -> Var Int e -> Free f (Var Int) e
+(.>) :: e <= e' => Var a e -> Vars as e' -> Vars (a : as) e'
+x .> xs = var x :> xs
+infixr .>
+
+gcd :: (CFunctor f, Boolean < f, Flow ref < f, Arith < f, e1 <= e, e2 <= e)
+    => Proxy ref -> Var Int e1 -> Var Int e2 -> Free f (Var Int) e
 gcd (Proxy @ref) x0 y0 =
-  loop (Proxy @ref) (Cons x0 (Cons y0 Nil)) (\r (Cons x (Cons y Nil)) ->
+  loop (Proxy @ref) (x0 .> y0 .> Nil) $ \r (x :> y :> Nil) ->
     gt x y >>= \b ->
     ite b
-      (sub (var x) (var y) >>= \x' ->
-      return (Cons x' (Cons (var y) Nil)))
-      (sub (var y) (var x) >>= \y' ->
-      return (Cons (var x) (Cons y' Nil)))
-      >>= \(Cons x' (Cons y' Nil)) ->
+      (sub x y >>= \x' ->
+      return (x' :> y .> Nil))
+      (sub y x >>= \y' ->
+      return (x .> y' :> Nil))
+      >>= \(x' :> y' :> Nil) ->
     eq x' y' >>= \b' ->
     ite b'
-      (return (var x'))
-      (br (var r) (Cons (var x') (Cons (var y') Nil))))
+      (return x')
+      (br r (x' .> y' .> Nil))
 
 type Void1 :: [Type] -> Type
 data Void1 a
@@ -236,4 +252,4 @@ data Void1 a
 main :: IO ()
 main = print
   @(Free (Boolean + (Flow Void1 + (Arith + End))) (Var Int) '[])
-  (int 8 >>= \x -> int 12 >>= \y -> gcd (Proxy @Void1) (var x) y)
+  (int 8 >>= \x -> int 12 >>= \y -> gcd (Proxy @Void1) x y)

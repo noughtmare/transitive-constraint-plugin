@@ -12,16 +12,16 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  TransitiveConstraintPlugin, Sub
+    exposed-modules:  TransitiveConstraintPlugin, Sub, SubInstances
     build-depends:    base ^>= {4.17,4.18}, ghc ^>= {9.4,9.6}
     hs-source-dirs:   src
     default-language: GHC2021
 
-executable free-example
+executable semsyn
     import:           warnings
-    main-is:          Free.hs
+    main-is:          Main.hs
     build-depends:    base, transitive-constraint-plugin
-    hs-source-dirs:   examples
+    hs-source-dirs:   semsyn
     default-language: GHC2021
 
 executable gcd-example
@@ -30,3 +30,17 @@ executable gcd-example
     build-depends:    base, transitive-constraint-plugin
     hs-source-dirs:   examples
     default-language: GHC2021
+
+-- executable free-example
+--     import:           warnings
+--     main-is:          Free.hs
+--     build-depends:    base, transitive-constraint-plugin
+--     hs-source-dirs:   examples
+--     default-language: GHC2021
+
+-- executable pcf-example
+--     import:           warnings
+--     main-is:          PCF.hs
+--     build-depends:    base, transitive-constraint-plugin
+--     hs-source-dirs:   examples
+--     default-language: GHC2021

@@ -5,235 +5,172 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Eta reduce" #-}
+{-# HLINT ignore "Avoid lambda" #-}
+{-# HLINT ignore "Use const" #-}
+{-# HLINT ignore "Use id" #-}
+{-# HLINT ignore "Redundant bracket" #-}
 
 import Data.Kind
 import Sub
-import Data.Proxy
 import Prelude hiding ((>>=))
 
-data Var env a where
-  VZ :: Var (a : env) a
-  VS :: Var env a -> Var (b : env) a
-
-deriving instance Show (Var env a)
-
-data Syn env a where
-  SynVar :: Var env a -> Syn env a
-  SynLam :: Syn (a : env) b -> Syn env (a -> b)
-  SynApp :: Syn env (a -> b) -> Syn env a -> Syn env b
-
-deriving instance Show (Syn env a)
-
-data Sem u a where
-  SemVar :: u a -> Sem u a
-  SemLam :: (forall u'. (u <= u') => u' a -> Sem u' b) -> Sem u (a -> b)
-  SemApp :: Sem u (a -> b) -> Sem u a -> Sem u b
-
-injVar :: Spine pre -> Proxy x -> Proxy env -> Var (pre ++ env) a -> Var (pre ++ (x : env)) a
-injVar SNil _ _ v = VS v
-injVar (SCons s) px penv (VS v) = VS (injVar s px penv v)
-
-instance Var env <= Var (x : env) where
-  inj = injVar SNil Proxy Proxy
-
-type family xs ++ ys where
-  '[] ++ ys = ys
-  (x : xs) ++ ys = x : (xs ++ ys)
-
-data Spine xs where
-  SNil :: Spine '[]
-  SCons :: Spine xs -> Spine (x : xs)
-
-injSyn :: Spine pre -> Proxy x -> Proxy env -> Syn (pre ++ env) a -> Syn (pre ++ (x : env)) a
-injSyn s px penv (SynVar v) = SynVar (injVar s px penv v)
-injSyn s px penv (SynLam bdy) = SynLam (injSyn (SCons s) px penv bdy)
-injSyn s px penv (SynApp f x) = SynApp (injSyn s px penv f) (injSyn s px penv x)
-
-instance Syn env <= Syn (x : env) where
-  inj = injSyn SNil Proxy Proxy
-
-synToSem :: Syn '[] a -> (forall u. Sem u a)
-synToSem x0 = go (\case {}) x0
-  where
-    go :: (forall x. Var env x -> u x) -> Syn env a -> Sem u a
-    go env (SynVar x) = SemVar (env x)
-    go env (SynApp f x) = SemApp (go env f) (go env x)
-    go env (SynLam bdy) = SemLam (\x -> go (\case VZ -> x; VS v -> inj (env v)) bdy)
-
-semToSyn :: (forall u. Sem u a) -> Syn '[] a
-semToSyn sem = go sem
-  where
-    go :: Sem (Var env) a -> Syn env a
-    go (SemVar x) = SynVar x
-    go (SemApp f x) = SynApp (go f) (go x)
-    go (SemLam bdy) = SynLam (go (bdy VZ))
-
-prog1 :: Sem u (b -> a -> b)
-prog1 = SemLam (\x -> SemLam (\_ -> SemVar (inj x)))
-
-λ, lam :: (forall u'. (u <= u') => (forall u''. (u' <= u'') => Sem u'' a) -> Sem u' b) -> Sem u (a -> b)
-λ f = SemLam (\x -> f (SemVar (inj x)))
--- For those who don't have a Greek keyboard
-lam f = λ f
+type STLChoas :: forall k. (k -> Type -> Type) -> Constraint
+class STLChoas f where
+  lam :: forall e a b. (forall e'. (f e <= f e') => (forall e''. (f e' <= f e'') => f e'' a) -> f e' b) -> f e (a -> b)
+  ($$) :: f e (a -> b) -> f e a -> f e b
 
 infixl 1 $$
-($$) :: Sem u (a -> b) -> Sem u a -> Sem u b
-($$) = SemApp
 
-prog2 :: Sem u ((b -> c) -> a -> b -> c)
-prog2 = λ\ x -> λ\ _y -> λ\ z -> x $$ z
+-- Syntax
 
-prog3 :: Sem u (a -> b -> b)
-prog3 = (λ\ x -> λ\ _y -> x) $$ λ\ y -> y
+type Ix :: [k] -> k -> Type
+data Ix e a where
+  Here :: Ix (a : e) a
+  There :: !(Ix e a) -> Ix (b : e) a
+deriving instance Show (Ix e a)
 
--- Free
+type DSTLC :: [k] -> k -> Type
+data DSTLC e a where
+  Var :: Ix e a -> DSTLC e a
+  Lam :: DSTLC (a : e) b -> DSTLC e (a -> b)
+  App :: DSTLC e (a -> b) -> DSTLC e a -> DSTLC e b
+deriving instance Show (DSTLC e a)
 
-type SynFree :: ((Type -> Type) -> Type -> Type) -> [Type] -> Type -> Type
-data SynFree f env a where
-  SynPure :: Var env a -> SynFree f env a
-  SynBind :: f (Var env) x -> SynFree f (x : env) a -> SynFree f env a
+eval :: DSTLC e a -> (forall x. Ix e x -> x) -> a
+eval (Var v) ev = ev v
+eval (Lam x) ev = \y -> eval x (\case Here -> y; There v -> ev v)
+eval (App x y) ev = eval x ev (eval y ev)
 
-injSynFree :: HFunctor f => Spine pre -> Proxy x -> Proxy env -> SynFree f (pre ++ env) a -> SynFree f (pre ++ (x : env)) a
-injSynFree s px penv (SynPure v) = SynPure (injVar s px penv v)
-injSynFree s px penv (SynBind op k) = SynBind (hmap (injVar s px penv) op) (injSynFree (SCons s) px penv k)
+rename :: (forall x. Ix e x -> Ix e' x) -> DSTLC e a -> DSTLC e' a
+rename f (Var v) = Var (f v)
+rename f (Lam x) = Lam (rename (\case Here -> Here; There v -> There (f v)) x)
+rename f (App x y) = App (rename f x) (rename f y)
 
--- I thought we could use this to implement bind in a syntax/semantics agnostic way.
--- You could write (forall m'. (m <= m') => ...)
--- That does work but you wouldn't be able to also weaken the u at the same time.
--- So, I don't think this approach really works for what I wanted to do with it.
-instance HFunctor f => SynFree f env <= SynFree f (x : env) where
-  inj = injSynFree SNil Proxy Proxy
+subst :: DSTLC e a -> (forall x. Ix e x -> DSTLC e' x) -> DSTLC e' a
+subst (Var v) ev = ev v
+subst (Lam x) ev = Lam (subst x (\case Here -> Var Here ; There v -> rename There (ev v)))
+subst (App x y) ev = App (subst x ev) (subst y ev)
 
+norm :: DSTLC e a -> DSTLC e a
+norm (Var v) = Var v
+norm (Lam x) = Lam (norm x)
+norm (App x y) = case (norm x, norm y) of
+  (Lam x', y') -> subst x' (\case Here -> y' ; There v -> Var v)
+  (x', y') -> x' $$ y'
 
-newtype SynF f a = SynF (SynFree f '[] a)
+data Thin xs ys where
+  Keep :: Thin xs ys -> Thin (x : xs) (x : ys)
+  Drop :: Thin xs ys -> Thin xs (x : ys)
+  Id :: Thin xs xs
+  Init :: Thin '[] xs
+deriving instance Show (Thin xs ys)
 
-type SemFree :: ((Type -> Type) -> Type -> Type) -> (Type -> Type) -> Type -> Type
-data SemFree f u a where
-  SemPure :: u a -> SemFree f u a
-  SemBind :: f u x -> (forall u'. (u <= u') => u' x -> SemFree f u' a) -> SemFree f u a
+data ThinF f e a = forall e'. ThinF (f e' a) (Thin e' e)
+deriving instance (forall e'. Show (f e' a)) => Show (ThinF f e a)
 
-(>>=) :: SemFree f u a -> (forall u'. u <= u' => (forall u''. u' <= u'' => u'' a) -> SemFree f u' b) -> SemFree f u b
-SemPure x >>= k = k (inj x)
-SemBind op k >>= k' = SemBind op (\x -> k (inj x) >>= k')
+data ThinMerge e1 e2 e = forall e3. ThinMerge (Thin e3 e) (Thin e1 e3) (Thin e2 e3)
 
-newtype SemF f a = SemF (forall u'. SemFree f u' a)
+mergeThin :: Thin e1 e -> Thin e2 e -> ThinMerge e1 e2 e
+mergeThin Id t2 = ThinMerge Id Id t2
+mergeThin t1 Id = ThinMerge Id t1 Id
+mergeThin Init t2 = ThinMerge t2 Init Id
+mergeThin t1 Init = ThinMerge t1 Id Init
+mergeThin (Keep t1) (Keep t2) = case mergeThin t1 t2 of
+  ThinMerge t t1' t2' -> ThinMerge (Keep t) (Keep t1') (Keep t2')
+mergeThin (Keep t1) (Drop t2) = case mergeThin t1 t2 of
+  ThinMerge t t1' t2' -> ThinMerge (Keep t) (Keep t1') (Drop t2')
+mergeThin (Drop t1) (Keep t2) = case mergeThin t1 t2 of
+  ThinMerge t t1' t2' -> ThinMerge (Keep t) (Drop t1') (Keep t2')
+mergeThin (Drop t1) (Drop t2) = case mergeThin t1 t2 of
+  ThinMerge t t1' t2' -> ThinMerge (Drop t) t1' t2'
 
-type HFunctor :: ((Type -> Type) -> Type -> Type) -> Constraint
-class HFunctor h where
-  hmap :: (forall x. f x -> g x) -> h f a -> h g a
+apThinIx :: Thin e e' -> Ix e a -> Ix e' a
+apThinIx (Keep _) Here = Here
+apThinIx (Keep t) (There v) = There (apThinIx t v)
+apThinIx (Drop t) v = There (apThinIx t v)
+apThinIx Id x = x
+apThinIx Init x = case x of {}
 
-synFToSemF :: HFunctor f => SynF f a -> SemF f a
-synFToSemF (SynF x0) = SemF (go (\case {}) x0) where
-  go :: HFunctor f => (forall x. Var env x -> u x) -> SynFree f env a -> SemFree f u a
-  go env (SynPure x) = SemPure (env x)
-  go env (SynBind op k) = SemBind (hmap env op) (\x -> go (\case VZ -> x; VS v -> inj (env v)) k)
+apThin :: Thin e e' -> DSTLC e a -> DSTLC e' a
+apThin Id x = x
+apThin t (Var v) = Var (apThinIx t v)
+apThin t (Lam x) = Lam (apThin (Keep t) x)
+apThin t (App x y) = App (apThin t x) (apThin t y)
 
-semFToSynF :: SemF f a -> SynF f a
-semFToSynF (SemF x0) = SynF (go x0) where
-  go :: SemFree f (Var env) a -> SynFree f env a
-  go (SemPure x) = SynPure x
-  go (SemBind op k) = SynBind op (go (k VZ))
+varThin :: Ix e a -> Thin '[a] e
+varThin Here = Keep Init
+varThin (There v) = Drop (varThin v)
 
-type OpTraverse :: (((Type -> Type) -> Type -> Type) -> Type -> Type) -> Constraint
-class OpTraverse h where
-  optraverse :: (Applicative m, HFunctor f, HFunctor g) => (forall u' x. f u' x -> m (g u' x)) -> h f a -> m (h g a)
+data KeepThin xs y ys where
+  KT :: Thin xs' ys -> KeepThin (y : xs') y ys
 
-instance OpTraverse SynF where
-  optraverse f (SynF x) = SynF <$> syntraverse f x
+thinHead :: Thin xs (y : ys) -> Either (Thin xs ys) (KeepThin xs y ys)
+thinHead (Keep t) = Right (KT t)
+thinHead (Drop t) = Left t
+thinHead Id = Right (KT Id)
+thinHead Init = Left Init
 
-syntraverse :: 
-  (Applicative m, HFunctor f, HFunctor g) =>
-  (forall u x. f u x -> m (g u x)) ->
-  SynFree f env a -> m (SynFree g env a)
-syntraverse _ (SynPure v) = pure (SynPure v)
-syntraverse f (SynBind op k) = SynBind <$> f op <*> syntraverse f k
+thin :: DSTLC e a -> ThinF DSTLC e a
+thin (Var v) = ThinF (Var Here) (varThin v)
+thin (Lam x) =
+  case thin x of
+    ThinF x' t -> case thinHead t of
+      Right (KT t') -> ThinF (Lam x') t'
+      Left t' -> ThinF (Lam (apThin (Drop Id) x')) t'
+thin (App x y) =
+  case (thin x, thin y) of
+    (ThinF x' tx, ThinF y' ty) -> case mergeThin tx ty of
+      ThinMerge t' tx' ty' -> ThinF (App (apThin tx' x') (apThin ty' y')) t'
 
-instance OpTraverse SemF where
-  optraverse f = fmap synFToSemF . optraverse f . semFToSynF
+instance DSTLC e <= DSTLC (x : e) where
+  inj = rename There
 
--- Hefty
+instance STLChoas DSTLC where
+  lam :: forall e a b. (forall e'. (DSTLC e <= DSTLC e') => (forall e''. (DSTLC e' <= DSTLC e'') => DSTLC e'' a) -> DSTLC e' b) -> DSTLC e (a -> b)
+  lam f = Lam (f (inj (Var (Here @_ @e)))) -- TODO: the @e can probably be avoided if the plugin was smarter.
+  ($$) = App
 
--- Put :: Int -> M ()
--- Get :: M Int
+type OThoas e a = forall k f (e' :: k). STLChoas f => (forall e'' x. f e' <= f e'' => Ix e x -> f e'' x) -> f e' a
 
--- State  = Int :-> Ret () :+: Ret Int
--- Nondet = M a :-> M a :-> M a
--- Except = 
+toHOAS :: DSTLC e a -> OThoas e a
+toHOAS (Var v) = \g -> g v
+toHOAS (Lam x) = \g -> lam \y -> toHOAS x \case Here -> y; There v -> g v
+toHOAS (App x y) = \g -> toHOAS x g $$ toHOAS y g
 
-type SynHefty :: (([Type] -> Type -> Type) -> (Type -> Type) -> Type -> Type) -> [Type] -> Type -> Type
-data SynHefty f env a where
-  SynPureH :: Var env a -> SynHefty f env a
-  SynBindH :: f sub (Var env) x -> () -> SynHefty f (x : env) a -> SynHefty f env a
+toHOAS0 :: STLChoas f => DSTLC '[] a -> f e' a
+toHOAS0 x = toHOAS x \case {}
 
-class HHTraversable h where
-  mutraverse :: Applicative f => (forall x. m x -> f (m' x)) -> (forall x. u x -> f (u' x)) -> h m u a -> f (h m' u' a)
+-- ConstId
 
-traverseSynHefty :: 
-  (Applicative n) => -- , forall m. HFunctor (f m), forall m. HFunctor (g m)) =>
-  (forall env u x. f (SynHefty f env) u x -> n (g (SynHefty g env) u x)) ->
-  SynHefty f env a ->
-  n (SynHefty g env a)
-traverseSynHefty _ (SynPureH x) = pure (SynPureH x)
-traverseSynHefty f (SynBindH op k) = SynBindH <$> f op <*> traverseSynHefty f k
+newtype ConstId a b = ConstId { unConstId :: b }
 
--- newtype SynF f a = SynF (SynFree f '[] a)
+instance ConstId a <= ConstId b where
+  inj (ConstId x) = ConstId x
 
+instance STLChoas ConstId where
+  lam f = ConstId (\x -> unConstId (f (ConstId x)))
+  ConstId f $$ ConstId x = ConstId (f x)
 
--- 
+-- Examples
 
-type SemHefty :: ((Type -> Type) -> (Type -> Type) -> Type -> Type) -> (Type -> Type) -> Type -> Type
-data SemHefty f u a where
-  SemPureH :: u a -> SemHefty f u a
-  SemBindH :: f (SemHefty f u) u x -> (forall u'. (u <= u') => u' x -> SemHefty f u' a) -> SemHefty f u a
+prog2 :: STLChoas f => f e ((b -> c) -> a -> b -> c)
+prog2 = lam \ x -> lam \ _y -> lam \ z -> x $$ z
 
--- (>>=) :: SemFree f u a -> (forall u'. u <= u' => (forall u''. u' <= u'' => u'' a) -> SemFree f u' b) -> SemFree f u b
--- SemPure x >>= k = k (inj x)
--- SemBind op k >>= k' = SemBind op (\x -> k (inj x) >>= k')
--- 
--- newtype SemF f a = SemF (forall u'. SemFree f u' a)
--- 
--- type HFunctor :: ((Type -> Type) -> Type -> Type) -> Constraint
--- class HFunctor h where
---   hmap :: (forall x. f x -> g x) -> h f a -> h g a
--- 
--- synFToSemF :: HFunctor f => SynF f a -> SemF f a
--- synFToSemF (SynF x0) = SemF (go (\case {}) x0) where
---   go :: HFunctor f => (forall x. Var env x -> u x) -> SynFree f env a -> SemFree f u a
---   go env (SynPure x) = SemPure (env x)
---   go env (SynBind op k) = SemBind (hmap env op) (\x -> go (\case VZ -> x; VS v -> inj (env v)) k)
--- 
--- semFToSynF :: SemF f a -> SynF f a
--- semFToSynF (SemF x0) = SynF (go x0) where
---   go :: SemFree f (Var env) a -> SynFree f env a
---   go (SemPure x) = SynPure x
---   go (SemBind op k) = SynBind op (go (k VZ))
--- 
--- type OpTraverse :: (((Type -> Type) -> Type -> Type) -> Type -> Type) -> Constraint
--- class OpTraverse h where
---   optraverse :: (Applicative m, HFunctor f, HFunctor g) => (forall u' x. f u' x -> m (g u' x)) -> h f a -> m (h g a)
--- 
--- instance OpTraverse SynF where
---   optraverse f (SynF x) = SynF <$> syntraverse f x
--- 
--- syntraverse :: 
---   (Applicative m, HFunctor f, HFunctor g) =>
---   (forall u x. f u x -> m (g u x)) ->
---   SynFree f env a -> m (SynFree g env a)
--- syntraverse _ (SynPure v) = pure (SynPure v)
--- syntraverse f (SynBind op k) = SynBind <$> f op <*> syntraverse f k
--- 
--- instance OpTraverse SemF where
---   optraverse f = fmap synFToSemF . optraverse f . semFToSynF
+prog3 :: STLChoas f => f e (a -> b -> b)
+prog3 = (lam \ x -> lam \ _y -> x) $$ (lam \ y -> y)
+
+fromHOAS :: (forall f. STLChoas f => f e a) -> DSTLC e a
+fromHOAS x = x
+
+semantic :: (forall f. STLChoas f => f e a) -> a
+semantic x = unConstId x
 
 main :: IO ()
 main = do
-  print (semToSyn prog1)
-  print (semToSyn prog2)
-  print (semToSyn (synToSem (semToSyn prog2)))
-  print (semToSyn prog3)
- 
+  print (thin prog2)
+  print (fromHOAS prog3)
+  print (norm prog3)
