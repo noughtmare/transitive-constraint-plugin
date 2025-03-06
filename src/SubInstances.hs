@@ -8,7 +8,7 @@ import Sub
 
 -- These are overlapping, but our plugin will resolve the overlap.
 
-instance  f <= f where
+instance f <= f where
   inj = id
 
 instance forall f g h. (f <= g, g <= h) => f <= h where

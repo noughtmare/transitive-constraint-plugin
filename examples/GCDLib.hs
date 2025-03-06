@@ -3,13 +3,13 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RequiredTypeArguments #-}
 
 module GCDLib where
 
 import qualified Sub
 import Data.Kind
 import Prelude hiding ((>>=), return, gcd)
-import Data.Proxy
 
 type CType = [Type] -> Type
 
@@ -92,8 +92,8 @@ true, false :: Boolean < f => Free f (Var Bool) e
 true = Free (inj (Bool True (Pure Here)))
 false = Free (inj (Bool False (Pure Here)))
 
-ite :: Boolean < f => Var Bool e -> Free f c e -> Free f c e -> Free f c e
-ite x t f = Free (inj (Ite x t f))
+ifThenElse :: Boolean < f => Var Bool e -> Free f c e -> Free f c e -> Free f c e
+ifThenElse x t f = Free (inj (Ite x t f))
 
 type State :: Type -> CType -> CType
 data State s c e where
@@ -139,17 +139,54 @@ data Flow ref c e where
   Br  :: Var (ref as) e -> Vars as e -> Flow ref c e
 deriving instance (forall e'. Show (c e')) => Show (Flow ref c e)
 
-heres :: forall as e. KnownLength as => Proxy e -> Vars as (as ++ e)
-heres Proxy = go (lengthS @as) where
+heres :: forall as. forall e -> KnownLength as => Vars as (as ++ e)
+heres e = go (lengthS @as) where
   go :: Length bs -> Vars bs (bs ++ e)
   go Z = Nil
   go (S i) = Here :> mapVars There (go i)
 
-block :: forall as ref f c e. (KnownLength as, e <= (as ++ e), Flow ref < f) => Proxy ref -> (forall e'. e <= e' => Var (ref as) e' -> Free f c e') -> (forall e'. e <= e' => Vars as e' -> Free f c e') -> Free f c e
-block _ m n = Free (inj (Block (m Here) (n (heres (Proxy @e)))))
+block :: forall as f c e. forall ref -> (KnownLength as, e <= (as ++ e), Flow ref < f) => (forall e'. e <= e' => Var (ref as) e' -> Free f c e') -> (forall e'. e <= e' => Vars as e' -> Free f c e') -> Free f c e
+block _ m n = Free (inj (Block (m Here) (n (heres e))))
 
-loop :: forall as ref f c e. (KnownLength as, e <= (as ++ e), e <= (ref as : as ++ e), Flow ref < f) => Proxy ref -> Vars as e -> (forall e'. e <= e' => Var (ref as) e' -> Vars as e' -> Free f c e') -> Free f c e
-loop _ x m = Free (inj (Loop x (m Here (mapVars There (heres (Proxy @e))))))
+loop :: forall as f c e. forall ref -> (KnownLength as, e <= (as ++ e), e <= (ref as : as ++ e), Flow ref < f) => Vars as e -> (forall e'. e <= e' => Var (ref as) e' -> Vars as e' -> Free f c e') -> Free f c e
+loop _ x m = Free (inj (Loop x (m Here (mapVars There (heres e)))))
+
+
+
+-- main point of the paper:
+-- specify syntax - CSet model <-- already a strong contribution
+-- state laws - effect theory
+-- write correct transformations
+
+-- (extra) How do we justify the laws?
+-- semantics could be used to prove laws, but is difficult for nontermination
+-- main argument: our approach allows us to prove laws by considering each effect individually
+-- Proving the correctness separately for each effect requires an equational framework, so perhaps
+-- proving it for a fixed set of effects is a better starting point.
+-- This would be a step in the right direction, but
+-- stating the equational framework in its full generality could be left for future work
+-- This is a wart
+
+-- (extra) We could add to the work of Benton and Kennedy by implementing a compiler to webassembly
+-- would include closure conversion transformation
+-- Needs some exploration to determine feasibility
+-- Timebox to 1 week
+-- Stretch goal: prove transformation correct using the laws
+
+-- (extra) look at larger transformations than in Benton and Kennedy, for example
+-- the dead code elimination, binding time analysis
+
+
+
+data Rec callRef retRef c e where
+  Rec :: c (args ++ callRef args ret : retRef ret : e) -> c (callRef args ret : e) -> Rec ref c e
+  Ret :: retRef ret -> Var ret e -> Rec callRef retRef c e
+  Call :: callRef args ret -> Vars args e -> c (ret : e) -> Rec callRef retRef c e
+
+
+
+
+
 
 br :: (Flow ref < f, e1 <= e) => Var (ref as) e1 -> Vars as e -> Free f c e
 br r x = Free (inj (Br (var r) x))
